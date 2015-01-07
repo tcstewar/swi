@@ -45,10 +45,6 @@ import mimetypes
 import SocketServer
 
 
-class HTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
-    pass
-
-
 favicon = ('\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x18\x00h\x03\x00'
            '\x00\x16\x00\x00\x00(\x00\x00\x00\x10\x00\x00\x00 \x00\x00\x00\x01'
            '\x00\x18\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
@@ -102,6 +98,7 @@ class SimpleWebInterface(BaseHTTPServer.BaseHTTPRequestHandler):
 
     pending_headers = None
     testing_user = None
+    attempted_login = False
 
     current_cookies = {}
     passwords = {}
@@ -154,7 +151,7 @@ class SimpleWebInterface(BaseHTTPServer.BaseHTTPRequestHandler):
         self.add_header('Set-Cookie:', 'id=0')
 
     def default_login_form(self, target=None, **data):
-        if self.attemptedLogin:
+        if self.attempted_login:
             message = 'Invalid password.  Try again.'
         else:
             message = 'Enter your user name and password:'
@@ -184,220 +181,227 @@ class SimpleWebInterface(BaseHTTPServer.BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.clear_headers()
-        data=self.rfile.read(int(self.headers['Content-Length']))
+        data = self.rfile.read(int(self.headers['Content-Length']))
         if 'multipart/form-data' in self.headers['Content-Type']:
-          db=self.makeDBFromMultipart(data)
+            db = self.make_db_from_multipart(data)
         else:
-          db=self.makeDBFromLine(data)
+            db = self.make_db_from_line(data)
         if '?' in self.path:
-          self.path,data=self.path.split('?',1)
-          db2=self.makeDBFromLine(data)
-          db.update(db2)
+            self.path, data = self.path.split('?', 1)
+            db2 = self.make_db_from_line(data)
+            db.update(db2)
 
-        if self.path=='': self.path='/'
-        self.path=self.fixText(self.path)
-        args=self.path[1:].split('/')
-        self.handleRequest(args,db)
+        if self.path == '':
+            self.path = '/'
+        self.path = self.fix_text(self.path)
+        args = self.path[1:].split('/')
+        self.handle_request(args, db)
 
     def do_GET(self):
         self.clear_headers()
-        if self.path=='': self.path='/'
-        self.path=self.fixText(self.path)
+        if self.path == '':
+            self.path = '/'
+        self.path = self.fix_text(self.path)
 
-        db={}
+        db = {}
         if '?' in self.path:
-          self.path,data=self.path.split('?',1)
-          db=self.makeDBFromLine(data)
+            self.path, data = self.path.split('?', 1)
+            db = self.make_db_from_line(data)
 
-        args=self.path[1:].split('/')
-        self.handleRequest(args,db)
+        args = self.path[1:].split('/')
+        self.handle_request(args, db)
 
-    def handleRequest(self,args,db):
-        self.currentArgs=args
-        if args[0]=='':
-          command='swi'
-        else: command='swi_%s'%args[0]
-        command=command.replace('.','_')
-
-        if hasattr(self,command):
-          ctype='text/html'
-          self.user=self.get_user_from_cookie()
-          if self.user is None and self.testing_user != None:
-              self.user = self.testing_user
-          self.attemptedLogin=False
-          if 'swi_id' in db and 'swi_pwd' in db:
-            self.attemptedLogin=True
-            self.user=self.get_user_from_id(db['swi_id'],db['swi_pwd'])
-            del db['swi_id']
-            del db['swi_pwd']
-          elif len(self.passwords)==0:
-            self.user=self.get_user_from_id('','')
-
-          try:
-            text=getattr(self,command)(*args[1:],**db)
-          except:
-            self.send_response(200)
-            self.send_header('Content-type','text/html')
-            self.end_headers()
-            print >>self.wfile,"<html><body><pre>"
-            text=StringIO.StringIO()
-            traceback.print_exc(file=text)
-            text=text.getvalue()
-            text=text.replace('<','<')
-            text=text.replace('>','>')
-            print >>self.wfile,"%s</pre></body></html>"%text
-            print text
-          else:
-            if type(text)==type(()):
-              ctype,text=text
-            self.send_response(200)
-            self.send_header('Content-type',ctype)
-            if self.pending_headers is not None:
-                for k,v in self.pending_headers:
-                    self.send_header(k,v)
-            self.end_headers()
-            print >>self.wfile,text
-        elif self.path[1:] in self.serve_files:
-          self.sendFile(self.path[1:])
-        elif self.path=='/robots.txt':
-          self.send_response(200)
-          self.send_header('Content-type','text/text')
-          self.end_headers()
-          print >>self.wfile,"User-agent: *\nDisallow: /"
+    def handle_request(self, args, db):
+        self.currentArgs = args
+        if args[0] == '':
+            command = 'swi'
         else:
-          for d in self.serve_dirs:
-            if self.path[1:].startswith(d+'/'):
-              self.sendFile(self.path[1:])
-              return
-          self.send_response(200)
-          self.send_header('Content-type','text/html')
-          self.end_headers()
-          print >>self.wfile,"<html><body>Invalid request:<pre>args=%s</pre><pre>db=%s</pre></body></html>"%(args,db)
-    def sendFile(self,path):
+            command = 'swi_%s' % args[0]
+        command = command.replace('.', '_')
+
+        if hasattr(self, command):
+            ctype = 'text/html'
+            self.user = self.get_user_from_cookie()
+            if self.user is None and self.testing_user is not None:
+                self.user = self.testing_user
+            self.attempted_login = False
+            if 'swi_id' in db and 'swi_pwd' in db:
+                self.attempted_login = True
+                self.user = self.get_user_from_id(db['swi_id'], db['swi_pwd'])
+                del db['swi_id']
+                del db['swi_pwd']
+            elif len(self.passwords) == 0:
+                self.user = self.get_user_from_id('', '')
+
+            try:
+                text = getattr(self, command)(*args[1:], **db)
+            except:
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                print >> self.wfile, "<html><body><pre>"
+                text = StringIO.StringIO()
+                traceback.print_exc(file=text)
+                text = text.getvalue()
+                text = text.replace('<', '<')
+                text = text.replace('>', '>')
+                print >> self.wfile, "%s</pre></body></html>" % text
+                print text
+            else:
+                if isinstance(text, tuple):
+                    ctype, text = text
+                self.send_response(200)
+                self.send_header('Content-type', ctype)
+                if self.pending_headers is not None:
+                    for k, v in self.pending_headers:
+                        self.send_header(k, v)
+                self.end_headers()
+                print >> self.wfile, text
+        elif self.path[1:] in self.serve_files:
+            self.send_file(self.path[1:])
+        elif self.path == '/robots.txt':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/text')
+            self.end_headers()
+            print >> self.wfile, "User-agent: *\nDisallow: /"
+        else:
+            for d in self.serve_dirs:
+                if self.path[1:].startswith(d+'/'):
+                    self.send_file(self.path[1:])
+                    return
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            print >> self.wfile, ("<html><body>Invalid request:"
+                                  "<pre>args=%s</pre><pre>db=%s</pre>"
+                                  "</body></html>" % (args, db))
+
+    def send_file(self, path):
         self.send_response(200)
-        type,enc=mimetypes.guess_type(path)
-        self.send_header('Content-type',type)
-        self.send_header('Content-encoding',enc)
+        type, enc = mimetypes.guess_type(path)
+        self.send_header('Content-type', type)
+        self.send_header('Content-encoding', enc)
         self.end_headers()
-        print >>self.wfile,file(path,'rb').read()
+        print >> self.wfile, file(path, 'rb').read()
 
-    def makeDBFromMultipart(self, data):
-          db={}
-          boundary=data[:data.find('\n')+1].strip()
-          n=len(boundary)
+    def make_db_from_multipart(self, data):
+        db = {}
+        boundary = data[:data.find('\n') + 1].strip()
+        n = len(boundary)
 
-          i=0
-          while 1:
-            j=data.find(boundary,i+n)
-            if j<0:
-              break
+        i = 0
+        while True:
+            j = data.find(boundary, i+n)
+            if j < 0:
+                break
 
-            content=data[i+n+2:j-2]
-            m=re.search(r'name="([^"]+)"',content)
-            name=m.group(1)
-            k=content.find('\r\n\r\n')+4
-            val=content[k:]
+            content = data[i + n + 2:j - 2]
+            m = re.search(r'name="([^"]+)"', content)
+            name = m.group(1)
+            k = content.find('\r\n\r\n') + 4
+            val = content[k:]
 
-            m=re.search(r'filename="([^"]+)"',content[:k])
-            if m!=None:
-              filename=m.group(1)
-              val=(filename,val)
+            m = re.search(r'filename="([^"]+)"', content[:k])
+            if m is not None:
+                filename = m.group(1)
+                val = (filename, val)
 
-            db[name]=val
+            db[name] = val
 
-            i=j
-          print db
-          return db
+            i = j
+        return db
 
-
-    def makeDBFromLine(self, data):
-          if '\n' in data:
-            data,x=data.split('\n',1)
-            data=data.strip()
-          db={}
-          for line in data.split('&'):
+    def make_db_from_line(self, data):
+        if '\n' in data:
+            data, x = data.split('\n', 1)
+            data = data.strip()
+        db = {}
+        for line in data.split('&'):
             if '=' in line:
-              key,val=line.split('=',1)
-              val=self.fixText(val)
-              key=self.fixText(key)
-              if key in db:
-                v=db[key]
-                if type(v)!=type([]): v=[v]
-                v.append(val)
-                val=v
-              db[key]=val
-          return db
+                key, val = line.split('=', 1)
+                val = self.fix_text(val)
+                key = self.fix_text(key)
+                if key in db:
+                    v = db[key]
+                    if not isinstance(v, list):
+                        v = [v]
+                    v.append(val)
+                    val = v
+                db[key] = val
+        return db
 
-    def fixText(self, val):
-          val=val.replace('+',' ')
-          i=0
-          while i<len(val)-2:
-            if val[i]=='%' and val[i+1] in '1234567890abcdefABCDEF' and val[i+2] in '1234567890abcdefABCDEF':
-              c=chr(int(val[i+1:i+3],16))
-              val=val[:i]+c+val[i+3:]
-            i+=1
-          return val
+    def fix_text(self, val):
+        val = val.replace('+', ' ')
+        i = 0
+        while i < len(val) - 2:
+            if val[i] == '%' and (val[i + 1] in '1234567890abcdefABCDEF' and
+                                  val[i + 2] in '1234567890abcdefABCDEF'):
+                c = chr(int(val[i + 1:i + 3], 16))
+                val = val[:i] + c + val[i + 3:]
+            i += 1
+        return val
 
 
-
-
-
-def start(klass, port=80, asynch=True, addr=''):
+def start(cls, port=80, asynch=True, addr=''):
     if asynch:
-        server=HTTPServer((addr,port),klass)
+        class HTTPServer(SocketServer.ThreadingMixIn,
+                         BaseHTTPServer.HTTPServer):
+            pass
+        server = HTTPServer((addr, port), cls)
     else:
-        server=BaseHTTPServer.HTTPServer((addr,port),klass)
+        server = BaseHTTPServer.HTTPServer((addr, port), cls)
     server.serve_forever()
 
+
 def browser(port=80):
-    thread.start_new_thread(webbrowser.open,('http://localhost:%d'%port,))
+    thread.start_new_thread(webbrowser.open, ('http://localhost:%d' % port,))
 
 
-if __name__=='__main__':
-  class Demo(SimpleWebInterface):
-    # http://localhost:8080/
-    def swi(self):
-      return 'Hello world!'
+if __name__ == '__main__':
+    class Demo(SimpleWebInterface):
+        # http://localhost:8080/
+        def swi(self):
+            return 'Hello world!'
 
-    # http://localhost:8080/test1?a=data
-    # http://localhost:8080/test1/data
-    def swi_test1(self,a='value'):
-      return 'The value of a is "%s"'%a
+        # http://localhost:8080/test1?a=data
+        # http://localhost:8080/test1/data
+        def swi_test1(self, a='value'):
+            return 'The value of a is "%s"' % a
 
-    # http://localhost:8080/test2?a=data&b=data2
-    # http://localhost:8080/test2/data/data2
-    # http://localhost:8080/test2?b=data2
-    def swi_test2(self,a='value',b='value'):
-      return 'The value of a is "%s" and b is "%s"'%(a,b)
+        # http://localhost:8080/test2?a=data&b=data2
+        # http://localhost:8080/test2/data/data2
+        # http://localhost:8080/test2?b=data2
+        def swi_test2(self, a='value', b='value'):
+            return 'The value of a is "%s" and b is "%s"' % (a, b)
 
-    # http://localhost:8080/page
-    def swi_page(self):
-      if self.user==None:
-        return self.default_login_form()
-      return '''
-      Hello, %s.
-      <p>Click <a href="otherPage">here</a> to go to another page.
-      <p>Click <a href="logout">here</a> to log out.
-      '''%self.user
+        # http://localhost:8080/page
+        def swi_page(self):
+            if self.user is None:
+                return self.default_login_form()
+            return '''
+            Hello, %s.
+            <p>Click <a href="otherPage">here</a> to go to another page.
+            <p>Click <a href="logout">here</a> to log out.
+            ''' % self.user
 
-    # http://localhost:8080/otherPage
-    def swi_otherPage(self):
-      if self.user==None:
-        return self.default_login_form()
-      return '''
-      You are now at the other page, %s.
-      <p>Click <a href="page">here</a> to go back to the first page.
-      <p>Click <a href="logout">here</a> to log out.
-      '''%self.user
+        # http://localhost:8080/otherPage
+        def swi_otherPage(self):
+            if self.user is None:
+                return self.default_login_form()
+            return '''
+            You are now at the other page, %s.
+            <p>Click <a href="page">here</a> to go back to the first page.
+            <p>Click <a href="logout">here</a> to log out.
+            ''' % self.user
 
-    # http://localhost:8080/logout
-    def swi_logout(self):
-      self.log_out()
-      return '''
-      You are now logged out.
-      <p>Click <a href="page">here</a> to the first page.
-      <p>Click <a href="otherPage">here</a> to go to another page.
-      '''
-  Demo.add_user('terry','password')
-  start(Demo,8080)
-
+        # http://localhost:8080/logout
+        def swi_logout(self):
+            self.log_out()
+            return '''
+            You are now logged out.
+            <p>Click <a href="page">here</a> to the first page.
+            <p>Click <a href="otherPage">here</a> to go to another page.
+            '''
+    Demo.add_user('terry', 'password')
+    browser(8080)
+    start(Demo, 8080)
