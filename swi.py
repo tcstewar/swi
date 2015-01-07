@@ -1,6 +1,5 @@
 """
 Simple Web Interface
-Version: 2005-04-04
 Author: Terry Stewart terry.stewart@gmail.com http://terrystewart.ca
 
 This software is released under the GNU General Public License.
@@ -8,9 +7,9 @@ See http://www.gnu.org/copyleft/gpl.html for more details.
 
 
 Simple Web Interface is a fast way to create Python programs that serve
-  dynamic web pages, without all that tedious mucking about with CGI scripts.
-  You simply define a class, and the methods in that class will be called to
-  create the various web pages.
+  dynamic web pages, without a heavyweight infrastructure.  Everything is
+  in this one file.  You simply define a class, and the methods in that
+  class will be called to create the various web pages.
 
 An HTTP request for http://server/page?a=val1&b=val2 will result in a call to
     def swi_page(self,a,b)
@@ -28,15 +27,6 @@ The system also supports a cookie-based login system.  You can define users
       return self.createLoginForm()
   You can log out by causing a call to self.logOut().
 
-For further documentation, see http://terrystewart.ca/swi.html
-
-
-**** History
-- 2005-08-06: Added support for <select multiple>
-- 2005-07-31: Added serveFiles and serverDirs to act as webserver
-- 2005-05-28: Added asynch option to start() to allow multiple requests
-- 2005-04-04: Added default favicon.ico icon
-- 2005-04-03: Initial Release
 """
 
 import BaseHTTPServer
