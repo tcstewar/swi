@@ -1,3 +1,15 @@
+"""Simple Web Sockets
+
+Based on 
+http://sidekick.windforwings.com/2013/03/
+       minimal-websocket-broadcast-server-in.html
+
+Currently only handles messages up to 126 bytes long.  To extend this,
+see http://tools.ietf.org/html/rfc6455#section-5.2
+Currently does not handle ping / pong messages
+"""
+
+
 import socket
 import hashlib
 import base64
