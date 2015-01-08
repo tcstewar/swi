@@ -432,6 +432,7 @@ class ClientSocket(object):
         #    - one frame at a time
         #    - text protocol
         #    - no ping pong messages
+        # see: http://tools.ietf.org/html/rfc6455#section-5.2
         try:
             data = bytearray(self.socket.recv(512))
         except socket.error, socket.timeout:
@@ -450,15 +451,19 @@ class ClientSocket(object):
         datalen = (0x7F & data[1])
 
         str_data = ''
-        if(datalen > 0):
+        if datalen > 0:
             mask_key = data[2:6]
-            masked_data = data[6:(6+datalen)]
+            masked_data = data[6:(6 + datalen)]
             unmasked_data = [masked_data[i] ^ mask_key[i % 4]
                              for i in range(len(masked_data))]
             str_data = str(bytearray(unmasked_data))
         return str_data
 
     def write(self, data):
+        # this only supports small packets.  To add support for larger
+        # packets, see: http://tools.ietf.org/html/rfc6455#section-5.2
+        assert len(data) < 126
+
         # 1st byte: fin bit set. text frame bits set.
         # 2nd byte: no mask. length set in 1 byte.
         resp = bytearray([0b10000001, len(data)])
