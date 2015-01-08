@@ -27,6 +27,13 @@ The system also supports a cookie-based login system.  You can define users
       return self.default_login_form()
   You can log out by causing a call to self.log_out().
 
+Websockets are also supported via functions that begin with ws_:
+    # ws://server/data
+    def ws_data(self, client):
+        while True:
+            msg = client.read()
+            if msg is not None:
+                client.write('received: ' + msg)
 """
 
 import BaseHTTPServer
@@ -42,6 +49,8 @@ import re
 import webbrowser
 import thread
 import mimetypes
+import base64
+import hashlib
 
 
 class SimpleWebInterface(BaseHTTPServer.BaseHTTPRequestHandler):
@@ -164,8 +173,42 @@ class SimpleWebInterface(BaseHTTPServer.BaseHTTPRequestHandler):
         args = self.path[1:].split('/')
         self.handle_request(args, db)
 
+    def handle_ws_request(self, args, db):
+        MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+        HSHAKE_RESP = ("HTTP/1.1 101 Switching Protocols\r\n"
+                       "Upgrade: websocket\r\n"
+                       "Connection: Upgrade\r\n"
+                       "Sec-WebSocket-Accept: %s\r\n"
+                       "\r\n")
+
+        if args[0] == '':
+            command = 'ws'
+        else:
+            command = 'ws_%s' % args[0]
+
+        client = ClientSocket(self.request, '')
+        key = self.headers['Sec-WebSocket-Key']
+        resp_data = (HSHAKE_RESP %
+                     base64.b64encode(hashlib.sha1(key + MAGIC).digest()))
+        client.socket.send(resp_data)
+        client.set_blocking(False)
+
+        self.user = self.get_user_from_cookie()
+        if self.user is None and self.testing_user is not None:
+            self.user = self.testing_user
+        try:
+            getattr(self, command)(*[client] + args[1:], **db)
+        except Exception:
+            traceback.print_exc()
+        client.socket.close()
+
     def handle_request(self, args, db):
         self.currentArgs = args
+
+        if 'Sec-WebSocket-Key' in self.headers:
+            self.handle_ws_request(args, db)
+            return
+
         if args[0] == '':
             command = 'swi'
         else:
@@ -295,15 +338,31 @@ class SimpleWebInterface(BaseHTTPServer.BaseHTTPRequestHandler):
         return val
 
 
+class AsyncHTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
+    requests = None
+
+    def process_request_thread(self, request, client_address):
+        # keep track of open threads, so we can close them when we exit
+        if self.requests is None:
+            self.requests = []
+        self.requests.append(request)
+        SocketServer.ThreadingMixIn.process_request_thread(self, request,
+                                                           client_address)
+        self.requests.remove(request)
+
+
 def start(cls, port=80, asynch=True, addr=''):
     if asynch:
-        class HTTPServer(SocketServer.ThreadingMixIn,
-                         BaseHTTPServer.HTTPServer):
-            pass
-        server = HTTPServer((addr, port), cls)
+        server = AsyncHTTPServer((addr, port), cls)
     else:
         server = BaseHTTPServer.HTTPServer((addr, port), cls)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        # shut down any remaining threads
+        if asynch and server.requests is not None:
+            for socket in server.requests:
+                socket.close()
 
 
 def browser(port=80):
@@ -354,6 +413,60 @@ favicon = ('\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x18\x00h\x03\x00'
            '\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
            '\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
            '\x00\x00')
+
+
+class ClientSocket(object):
+    def __init__(self, socket, addr):
+        self.socket = socket
+        self.addr = addr
+
+    def set_timeout(self, timeout):
+        self.socket.settimeout(timeout)
+
+    def set_blocking(self, flag):
+        self.socket.setblocking(flag)
+
+    def read(self):
+        # as a simple server, we expect to receive:
+        #    - all data at one go and one frame
+        #    - one frame at a time
+        #    - text protocol
+        #    - no ping pong messages
+        try:
+            data = bytearray(self.socket.recv(512))
+        except socket.error, socket.timeout:
+            return None
+
+        if(len(data) < 6):
+            raise Exception("Error reading data")
+        # FIN bit must be set to indicate end of frame
+        assert(0x1 == (0xFF & data[0]) >> 7)
+        # data must be a text frame
+        # 0x8 (close connection) is handled with assertion failure
+        assert(0x1 == (0xF & data[0]))
+
+        # assert that data is masked
+        assert(0x1 == (0xFF & data[1]) >> 7)
+        datalen = (0x7F & data[1])
+
+        str_data = ''
+        if(datalen > 0):
+            mask_key = data[2:6]
+            masked_data = data[6:(6+datalen)]
+            unmasked_data = [masked_data[i] ^ mask_key[i % 4]
+                             for i in range(len(masked_data))]
+            str_data = str(bytearray(unmasked_data))
+        return str_data
+
+    def write(self, data):
+        # 1st byte: fin bit set. text frame bits set.
+        # 2nd byte: no mask. length set in 1 byte.
+        resp = bytearray([0b10000001, len(data)])
+        # append the data bytes
+        for d in bytearray(data):
+            resp.append(d)
+
+        self.socket.send(resp)
 
 
 if __name__ == '__main__':
